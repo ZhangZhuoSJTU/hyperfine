@@ -87,11 +87,11 @@ fn run_command_and_measure_common(
             CmdFailureAction::IgnoreAllFailures => false,
             CmdFailureAction::IgnoreSpecificFailures(ref codes) => {
                 // Only fail if the exit code is not in the list of codes to ignore
-                if let Some(exit_code) = extract_exit_code(result.status) {
-                    !codes.contains(&exit_code)
-                } else {
+                let exit_code = extract_exit_code(result.status);
+                match exit_code {
+                    Some(code) => !codes.contains(&code),
                     // If we can't extract an exit code, treat it as a failure
-                    true
+                    None => true,
                 }
             }
         };
@@ -104,14 +104,13 @@ fn run_command_and_measure_common(
                 BenchmarkIteration::Benchmark(0) => "the first benchmark run".to_string(),
                 BenchmarkIteration::Benchmark(i) => format!("benchmark iteration {i}"),
             };
+            let cause = match result.status.code() {
+                Some(c) => format!("Command terminated with non-zero exit code {c}"),
+                None => "The process has been terminated by a signal".to_string(),
+            };
             bail!(
                 "{cause} in {when}. Use the '-i'/'--ignore-failure' option if you want to ignore this. \
                 Alternatively, use the '--show-output' option to debug what went wrong.",
-                cause=result.status.code().map_or(
-                    "The process has been terminated by a signal".into(),
-                    |c| format!("Command terminated with non-zero exit code {c}")
-
-                ),
             );
         }
     }
@@ -310,12 +309,10 @@ impl MockExecutor {
     }
 
     fn extract_time<S: AsRef<str>>(sleep_command: S) -> Second {
-        assert!(sleep_command.as_ref().starts_with("sleep "));
-        sleep_command
-            .as_ref()
-            .trim_start_matches("sleep ")
-            .parse::<Second>()
-            .unwrap()
+        let command_str = sleep_command.as_ref();
+        assert!(command_str.starts_with("sleep "));
+        let time_str = command_str.trim_start_matches("sleep ");
+        time_str.parse::<Second>().unwrap()
     }
 }
 

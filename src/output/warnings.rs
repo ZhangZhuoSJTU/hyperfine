@@ -29,13 +29,8 @@ impl fmt::Display for Warnings {
                 MIN_EXECUTION_TIME * 1e3
             ),
             Warnings::NonZeroExitCode => write!(f, "Ignoring non-zero exit code."),
-            Warnings::SlowInitialRun(time_first_run, ref options) => write!(
-                f,
-                "The first benchmarking run for this command was significantly slower than the \
-                 rest ({time}). This could be caused by (filesystem) caches that were not filled until \
-                 after the first run. {hints}",
-                time=format_duration(time_first_run, None),
-                hints=match (options.warmup_in_use, options.prepare_in_use) {
+            Warnings::SlowInitialRun(time_first_run, ref options) => {
+                let hints = match (options.warmup_in_use, options.prepare_in_use) {
                     (true, true) => "You are already using both the '--warmup' option as well \
                     as the '--prepare' option. Consider re-running the benchmark on a quiet system. \
                     Maybe it was a random outlier. Alternatively, consider increasing the warmup \
@@ -51,19 +46,28 @@ impl fmt::Display for Warnings {
                     to fill those caches before the actual benchmark.",
                     (false, false) => "You should consider using the '--warmup' option to fill \
                     those caches before the actual benchmark. Alternatively, use the '--prepare' \
-                    option to clear the caches before each timing run."
-                }
-            ),
-            Warnings::OutliersDetected(ref options) => write!(
-                f,
-                "Statistical outliers were detected. Consider re-running this benchmark on a quiet \
-                 system without any interferences from other programs.{hint}",
-                hint=if options.warmup_in_use && options.prepare_in_use {
+                    option to clear the caches before each timing run.",
+                };
+                write!(
+                    f,
+                    "The first benchmarking run for this command was significantly slower than the \
+                 rest ({time}). This could be caused by (filesystem) caches that were not filled until \
+                 after the first run. {hints}",
+                    time = format_duration(time_first_run, None),
+                )
+            }
+            Warnings::OutliersDetected(ref options) => {
+                let hint = if options.warmup_in_use && options.prepare_in_use {
                     ""
                 } else {
                     " It might help to use the '--warmup' or '--prepare' options."
-                }
-            ),
+                };
+                write!(
+                    f,
+                    "Statistical outliers were detected. Consider re-running this benchmark on a quiet \
+                 system without any interferences from other programs.{hint}",
+                )
+            }
         }
     }
 }

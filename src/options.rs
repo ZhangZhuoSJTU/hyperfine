@@ -285,7 +285,8 @@ impl Options {
                 .transpose()
         };
 
-        options.warmup_count = param_to_u64("warmup")?.unwrap_or(options.warmup_count);
+        let warmup_count_arg = param_to_u64("warmup")?;
+        options.warmup_count = warmup_count_arg.unwrap_or(options.warmup_count);
 
         let mut min_runs = param_to_u64("min-runs")?;
         let mut max_runs = param_to_u64("max-runs")?;
@@ -295,41 +296,38 @@ impl Options {
             max_runs = Some(runs);
         }
 
-        match (min_runs, max_runs) {
-            (Some(min), None) => {
-                options.run_bounds.min = min;
-            }
-            (None, Some(max)) => {
-                // Since the minimum was not explicit we lower it if max is below the default min.
-                options.run_bounds.min = cmp::min(options.run_bounds.min, max);
-                options.run_bounds.max = Some(max);
-            }
-            (Some(min), Some(max)) if min > max => {
+        if let (Some(min), None) = (min_runs, max_runs) {
+            options.run_bounds.min = min;
+        } else if let (None, Some(max)) = (min_runs, max_runs) {
+            // Since the minimum was not explicit we lower it if max is below the default min.
+            options.run_bounds.min = cmp::min(options.run_bounds.min, max);
+            options.run_bounds.max = Some(max);
+        } else if let (Some(min), Some(max)) = (min_runs, max_runs) {
+            if min > max {
                 return Err(OptionsError::EmptyRunsRange);
             }
-            (Some(min), Some(max)) => {
-                options.run_bounds.min = min;
-                options.run_bounds.max = Some(max);
-            }
-            (None, None) => {}
-        };
+            options.run_bounds.min = min;
+            options.run_bounds.max = Some(max);
+        }
 
-        options.setup_command = matches.get_one::<String>("setup").map(String::from);
+        let setup_arg = matches.get_one::<String>("setup");
+        options.setup_command = setup_arg.map(String::from);
 
-        options.reference_command = matches.get_one::<String>("reference").map(String::from);
-        options.reference_name = matches
-            .get_one::<String>("reference-name")
-            .map(String::from);
+        let reference_arg = matches.get_one::<String>("reference");
+        options.reference_command = reference_arg.map(String::from);
+        let reference_name_arg = matches.get_one::<String>("reference-name");
+        options.reference_name = reference_name_arg.map(String::from);
 
-        options.preparation_command = matches
-            .get_many::<String>("prepare")
-            .map(|values| values.map(String::from).collect::<Vec<String>>());
+        let prepare_args = matches.get_many::<String>("prepare");
+        options.preparation_command =
+            prepare_args.map(|values| values.map(String::from).collect::<Vec<String>>());
 
-        options.conclusion_command = matches
-            .get_many::<String>("conclude")
-            .map(|values| values.map(String::from).collect::<Vec<String>>());
+        let conclude_args = matches.get_many::<String>("conclude");
+        options.conclusion_command =
+            conclude_args.map(|values| values.map(String::from).collect::<Vec<String>>());
 
-        options.cleanup_command = matches.get_one::<String>("cleanup").map(String::from);
+        let cleanup_arg = matches.get_one::<String>("cleanup");
+        options.cleanup_command = cleanup_arg.map(String::from);
 
         options.command_output_policies = if matches.get_flag("show-output") {
             vec![CommandOutputPolicy::Inherit]
@@ -392,10 +390,11 @@ impl Options {
             OutputStyleOption::Disabled => {}
         };
 
+        let sort_order_arg = matches.get_one::<String>("sort").map(|s| s.as_str());
         (
             options.sort_order_speed_comparison,
             options.sort_order_exports,
-        ) = match matches.get_one::<String>("sort").map(|s| s.as_str()) {
+        ) = match sort_order_arg {
             None | Some("auto") => (SortOrder::MeanTime, SortOrder::Command),
             Some("command") => (SortOrder::Command, SortOrder::Command),
             Some("mean-time") => (SortOrder::MeanTime, SortOrder::MeanTime),
@@ -422,15 +421,15 @@ impl Options {
             options.command_failure_action = match mode.as_str() {
                 "all-non-zero" | "" => CmdFailureAction::IgnoreAllFailures,
                 codes => {
-                    let exit_codes: Result<Vec<i32>, _> = codes
-                        .split(',')
-                        .map(|s| {
-                            s.trim()
-                                .parse::<i32>()
-                                .map_err(|e| OptionsError::IntParsingError("ignore-failure", e))
-                        })
-                        .collect();
-                    CmdFailureAction::IgnoreSpecificFailures(exit_codes?)
+                    let mut exit_codes: Vec<i32> = Vec::new();
+                    for code_str in codes.split(',') {
+                        let code = code_str
+                            .trim()
+                            .parse::<i32>()
+                            .map_err(|e| OptionsError::IntParsingError("ignore-failure", e))?;
+                        exit_codes.push(code);
+                    }
+                    CmdFailureAction::IgnoreSpecificFailures(exit_codes)
                 }
             };
         }

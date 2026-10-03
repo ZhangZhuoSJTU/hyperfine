@@ -22,13 +22,13 @@ impl Exporter for CsvExporter {
         let mut writer = WriterBuilder::new().from_writer(vec![]);
 
         {
-            let mut headers: Vec<Cow<[u8]>> = [
-                // The list of times and exit codes cannot be exported to the CSV file - omit them.
+            let mut headers: Vec<Cow<[u8]>> = Vec::new();
+            // The list of times and exit codes cannot be exported to the CSV file - omit them.
+            for x in [
                 "command", "mean", "stddev", "median", "user", "system", "min", "max",
-            ]
-            .iter()
-            .map(|x| Cow::Borrowed(x.as_bytes()))
-            .collect();
+            ] {
+                headers.push(Cow::Borrowed(x.as_bytes()));
+            }
             if let Some(res) = results.first() {
                 for param_name in res.parameters.keys() {
                     headers.push(Cow::Owned(format!("parameter_{param_name}").into_bytes()));

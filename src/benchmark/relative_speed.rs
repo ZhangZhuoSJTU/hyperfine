@@ -18,10 +18,17 @@ pub fn compare_mean_time(l: &BenchmarkResult, r: &BenchmarkResult) -> Ordering {
 }
 
 pub fn fastest_of(results: &[BenchmarkResult]) -> &BenchmarkResult {
-    results
-        .iter()
-        .min_by(|&l, &r| compare_mean_time(l, r))
-        .expect("at least one benchmark result")
+    if results.len() == 1 {
+        // SAFETY: length checked above.
+        return unsafe { results.get_unchecked(0) };
+    }
+    let mut fastest = results.first().expect("at least one benchmark result");
+    for result in &results[1..] {
+        if compare_mean_time(result, fastest) == Ordering::Less {
+            fastest = result;
+        }
+    }
+    fastest
 }
 
 fn compute_relative_speeds<'a>(
@@ -29,49 +36,50 @@ fn compute_relative_speeds<'a>(
     reference: &'a BenchmarkResult,
     sort_order: SortOrder,
 ) -> Vec<BenchmarkResultWithRelativeSpeed<'a>> {
-    let mut results: Vec<_> = results
-        .iter()
-        .map(|result| {
-            let is_reference = result == reference;
-            let relative_ordering = compare_mean_time(result, reference);
+    let mut results_vec: Vec<BenchmarkResultWithRelativeSpeed<'a>> =
+        Vec::with_capacity(results.len());
+    for result in results {
+        let is_reference = result == reference;
+        let relative_ordering = compare_mean_time(result, reference);
 
-            if result.mean == 0.0 {
-                return BenchmarkResultWithRelativeSpeed {
-                    result,
-                    relative_speed: if is_reference { 1.0 } else { f64::INFINITY },
-                    relative_speed_stddev: None,
-                    is_reference,
-                    relative_ordering,
-                };
-            }
-
-            let ratio = match relative_ordering {
-                Ordering::Less => reference.mean / result.mean,
-                Ordering::Equal => 1.0,
-                Ordering::Greater => result.mean / reference.mean,
-            };
-
-            // https://en.wikipedia.org/wiki/Propagation_of_uncertainty#Example_formulas
-            // Covariance asssumed to be 0, i.e. variables are assumed to be independent
-            let ratio_stddev = match (result.stddev, reference.stddev) {
-                (Some(result_stddev), Some(fastest_stddev)) => Some(
-                    ratio
-                        * ((result_stddev / result.mean).powi(2)
-                            + (fastest_stddev / reference.mean).powi(2))
-                        .sqrt(),
-                ),
-                _ => None,
-            };
-
-            BenchmarkResultWithRelativeSpeed {
+        if result.mean == 0.0 {
+            results_vec.push(BenchmarkResultWithRelativeSpeed {
                 result,
-                relative_speed: ratio,
-                relative_speed_stddev: ratio_stddev,
+                relative_speed: if is_reference { 1.0 } else { f64::INFINITY },
+                relative_speed_stddev: None,
                 is_reference,
                 relative_ordering,
-            }
-        })
-        .collect();
+            });
+            continue;
+        }
+
+        let ratio = match relative_ordering {
+            Ordering::Less => reference.mean / result.mean,
+            Ordering::Equal => 1.0,
+            Ordering::Greater => result.mean / reference.mean,
+        };
+
+        // https://en.wikipedia.org/wiki/Propagation_of_uncertainty#Example_formulas
+        // Covariance asssumed to be 0, i.e. variables are assumed to be independent
+        let ratio_stddev = match (result.stddev, reference.stddev) {
+            (Some(result_stddev), Some(fastest_stddev)) => Some(
+                ratio
+                    * ((result_stddev / result.mean).powi(2)
+                        + (fastest_stddev / reference.mean).powi(2))
+                    .sqrt(),
+            ),
+            _ => None,
+        };
+
+        results_vec.push(BenchmarkResultWithRelativeSpeed {
+            result,
+            relative_speed: ratio,
+            relative_speed_stddev: ratio_stddev,
+            is_reference,
+            relative_ordering,
+        });
+    }
+    let mut results = results_vec;
 
     match sort_order {
         SortOrder::Command => {}

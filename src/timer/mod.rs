@@ -109,7 +109,10 @@ pub fn execute_and_measure(mut command: Command) -> Result<TimerResult> {
     let status = child.wait()?;
 
     let time_real = wallclock_timer.stop();
-    let (time_user, time_system, memory_usage_byte) = cpu_timer.stop();
+    let cpu_times = cpu_timer.stop();
+    let time_user = cpu_times.0;
+    let time_system = cpu_times.1;
+    let memory_usage_byte = cpu_times.2;
 
     Ok(TimerResult {
         time_real,

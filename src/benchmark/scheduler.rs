@@ -47,8 +47,8 @@ impl<'a> Scheduler<'a> {
         executor.calibrate()?;
 
         for (number, cmd) in reference.iter().chain(self.commands.iter()).enumerate() {
-            self.results
-                .push(Benchmark::new(number, cmd, self.options, &*executor).run()?);
+            let benchmark_result = Benchmark::new(number, cmd, self.options, &*executor).run()?;
+            self.results.push(benchmark_result);
 
             // We export results after each individual benchmark, because
             // we would risk losing them if a later benchmark fails.
@@ -67,12 +67,10 @@ impl<'a> Scheduler<'a> {
             return;
         }
 
-        let reference = self
-            .options
-            .reference_command
-            .as_ref()
-            .map(|_| &self.results[0])
-            .unwrap_or_else(|| relative_speed::fastest_of(&self.results));
+        let reference = match self.options.reference_command {
+            Some(_) => &self.results[0],
+            None => relative_speed::fastest_of(&self.results),
+        };
 
         if let Some(annotated_results) = relative_speed::compute_with_check_from_reference(
             &self.results,
@@ -92,28 +90,9 @@ impl<'a> Scheduler<'a> {
                     );
 
                     for item in others {
-                        let stddev = if let Some(stddev) = item.relative_speed_stddev {
-                            format!(" ± {}", format!("{:.2}", stddev).green())
-                        } else {
-                            "".into()
-                        };
-                        let comparator = match item.relative_ordering {
-                            Ordering::Less => format!(
-                                "{}{} times slower than",
-                                format!("{:8.2}", item.relative_speed).bold().green(),
-                                stddev
-                            ),
-                            Ordering::Greater => format!(
-                                "{}{} times faster than",
-                                format!("{:8.2}", item.relative_speed).bold().green(),
-                                stddev
-                            ),
-                            Ordering::Equal => format!(
-                                "    As fast ({}{}) as",
-                                format!("{:.2}", item.relative_speed).bold().green(),
-                                stddev
-                            ),
-                        };
+                        let stddev = format_relative_stddev(item.relative_speed_stddev);
+                        let comparator =
+                            format_comparator(item.relative_ordering, item.relative_speed, &stddev);
                         println!(
                             "{} {}",
                             comparator,
@@ -155,6 +134,33 @@ impl<'a> Scheduler<'a> {
 
     pub fn final_export(&self) -> Result<()> {
         self.export_manager.write_results(&self.results, false)
+    }
+}
+
+fn format_relative_stddev(stddev: Option<f64>) -> String {
+    match stddev {
+        Some(stddev) => format!(" ± {}", format!("{:.2}", stddev).green()),
+        None => "".into(),
+    }
+}
+
+fn format_comparator(ordering: Ordering, relative_speed: f64, stddev: &str) -> String {
+    match ordering {
+        Ordering::Less => format!(
+            "{}{} times slower than",
+            format!("{relative_speed:8.2}").bold().green(),
+            stddev
+        ),
+        Ordering::Greater => format!(
+            "{}{} times faster than",
+            format!("{relative_speed:8.2}").bold().green(),
+            stddev
+        ),
+        Ordering::Equal => format!(
+            "    As fast ({}{}) as",
+            format!("{relative_speed:.2}").bold().green(),
+            stddev
+        ),
     }
 }
 

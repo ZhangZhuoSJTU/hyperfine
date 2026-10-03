@@ -6,17 +6,14 @@ pub struct AsciidocExporter {}
 
 impl MarkupExporter for AsciidocExporter {
     fn table_header(&self, cell_aligmnents: &[Alignment]) -> String {
-        format!(
-            "[cols=\"{}\"]\n|===",
-            cell_aligmnents
-                .iter()
-                .map(|a| match a {
-                    Alignment::Left => "<",
-                    Alignment::Right => ">",
-                })
-                .collect::<Vec<&str>>()
-                .join(",")
-        )
+        let mut columns: Vec<&str> = Vec::new();
+        for a in cell_aligmnents {
+            columns.push(match a {
+                Alignment::Left => "<",
+                Alignment::Right => ">",
+            });
+        }
+        format!("[cols=\"{}\"]\n|===", columns.join(","))
     }
 
     fn table_footer(&self, _cell_aligmnents: &[Alignment]) -> String {

@@ -83,10 +83,9 @@ fn range_step_size_hint<T: Numeric>(start: T, end: T, step: T) -> (usize, Option
     }
 
     let steps = (end - start + T::from(1)) / step;
-    steps
-        .into()
-        .try_into()
-        .map_or((usize::MAX, None), |u| (u, Some(u)))
+    let steps_as_number: Number = steps.into();
+    let steps_as_usize: Result<usize, ()> = steps_as_number.try_into();
+    steps_as_usize.map_or((usize::MAX, None), |u| (u, Some(u)))
 }
 
 #[cfg(test)]

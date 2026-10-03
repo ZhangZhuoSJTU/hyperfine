@@ -58,20 +58,26 @@ fn get_cpu_times() -> CPUTimes {
     };
 
     #[allow(clippy::useless_conversion)]
+    let user_usec =
+        i64::from(result.ru_utime.tv_sec) * MICROSEC_PER_SEC + i64::from(result.ru_utime.tv_usec);
+    #[allow(clippy::useless_conversion)]
+    let system_usec =
+        i64::from(result.ru_stime.tv_sec) * MICROSEC_PER_SEC + i64::from(result.ru_stime.tv_usec);
+    let memory_usage_byte = u64::try_from(max_rss_byte).unwrap_or(0);
     CPUTimes {
-        user_usec: i64::from(result.ru_utime.tv_sec) * MICROSEC_PER_SEC
-            + i64::from(result.ru_utime.tv_usec),
-        system_usec: i64::from(result.ru_stime.tv_sec) * MICROSEC_PER_SEC
-            + i64::from(result.ru_stime.tv_usec),
-        memory_usage_byte: u64::try_from(max_rss_byte).unwrap_or(0),
+        user_usec,
+        system_usec,
+        memory_usage_byte,
     }
 }
 
 /// Compute the time intervals in between two `CPUTimes` snapshots
 fn cpu_time_interval(start: &CPUTimes, end: &CPUTimes) -> CPUInterval {
+    let user_usec_diff = end.user_usec - start.user_usec;
+    let system_usec_diff = end.system_usec - start.system_usec;
     CPUInterval {
-        user: ((end.user_usec - start.user_usec) as f64) * 1e-6,
-        system: ((end.system_usec - start.system_usec) as f64) * 1e-6,
+        user: (user_usec_diff as f64) * 1e-6,
+        system: (system_usec_diff as f64) * 1e-6,
     }
 }
 

@@ -11,16 +11,14 @@ impl MarkupExporter for MarkdownExporter {
     }
 
     fn table_divider(&self, cell_aligmnents: &[Alignment]) -> String {
-        format!(
-            "|{}\n",
-            cell_aligmnents
-                .iter()
-                .map(|a| match a {
-                    Alignment::Left => ":---|",
-                    Alignment::Right => "---:|",
-                })
-                .collect::<String>()
-        )
+        let mut dividers = String::new();
+        for a in cell_aligmnents {
+            dividers.push_str(match a {
+                Alignment::Left => ":---|",
+                Alignment::Right => "---:|",
+            });
+        }
+        format!("|{dividers}\n")
     }
 
     fn command(&self, cmd: &str) -> String {

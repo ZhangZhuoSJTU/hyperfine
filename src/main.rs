@@ -51,11 +51,8 @@ fn run() -> Result<()> {
 }
 
 fn main() {
-    match run() {
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("{} {:#}", "Error:".red(), e);
-            std::process::exit(1);
-        }
+    if let Err(e) = run() {
+        eprintln!("{} {:#}", "Error:".red(), e);
+        std::process::exit(1);
     }
 }

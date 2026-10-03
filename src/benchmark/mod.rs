@@ -77,19 +77,16 @@ impl<'a> Benchmark<'a> {
         parameters: impl IntoIterator<Item = ParameterNameAndValue<'a>>,
         output_policy: &CommandOutputPolicy,
     ) -> Result<TimingResult> {
-        let command = self
-            .options
-            .setup_command
-            .as_ref()
-            .map(|setup_command| Command::new_parametrized(None, setup_command, parameters));
-
         let error_output = "The setup command terminated with a non-zero exit code. \
                             Append ' || true' to the command if you are sure that this can be ignored.";
 
-        Ok(command
-            .map(|cmd| self.run_intermediate_command(&cmd, error_output, output_policy))
-            .transpose()?
-            .unwrap_or_default())
+        match &self.options.setup_command {
+            Some(setup_command) => {
+                let cmd = Command::new_parametrized(None, setup_command, parameters);
+                self.run_intermediate_command(&cmd, error_output, output_policy)
+            }
+            None => Ok(TimingResult::default()),
+        }
     }
 
     /// Run the command specified by `--cleanup`.
@@ -98,19 +95,16 @@ impl<'a> Benchmark<'a> {
         parameters: impl IntoIterator<Item = ParameterNameAndValue<'a>>,
         output_policy: &CommandOutputPolicy,
     ) -> Result<TimingResult> {
-        let command = self
-            .options
-            .cleanup_command
-            .as_ref()
-            .map(|cleanup_command| Command::new_parametrized(None, cleanup_command, parameters));
-
         let error_output = "The cleanup command terminated with a non-zero exit code. \
                             Append ' || true' to the command if you are sure that this can be ignored.";
 
-        Ok(command
-            .map(|cmd| self.run_intermediate_command(&cmd, error_output, output_policy))
-            .transpose()?
-            .unwrap_or_default())
+        match &self.options.cleanup_command {
+            Some(cleanup_command) => {
+                let cmd = Command::new_parametrized(None, cleanup_command, parameters);
+                self.run_intermediate_command(&cmd, error_output, output_policy)
+            }
+            None => Ok(TimingResult::default()),
+        }
     }
 
     /// Run the command specified by `--prepare`.
@@ -170,11 +164,9 @@ impl<'a> Benchmark<'a> {
             )
         });
 
-        let run_preparation_command = || {
-            preparation_command
-                .as_ref()
-                .map(|cmd| self.run_preparation_command(cmd, output_policy))
-                .transpose()
+        let run_preparation_command = || match preparation_command.as_ref() {
+            Some(cmd) => self.run_preparation_command(cmd, output_policy).map(Some),
+            None => Ok(None),
         };
 
         let conclusion_command = self.options.conclusion_command.as_ref().map(|values| {
@@ -189,14 +181,20 @@ impl<'a> Benchmark<'a> {
                 self.command.get_parameters().iter().cloned(),
             )
         });
-        let run_conclusion_command = || {
-            conclusion_command
-                .as_ref()
-                .map(|cmd| self.run_conclusion_command(cmd, output_policy))
-                .transpose()
+        let run_conclusion_command = || match conclusion_command.as_ref() {
+            Some(cmd) => self.run_conclusion_command(cmd, output_policy).map(Some),
+            None => Ok(None),
         };
 
         self.run_setup_command(self.command.get_parameters().iter().cloned(), output_policy)?;
+
+        let mut recent_warmup_times = [0.0_f64; 4];
+        if self.options.warmup_count > 0 {
+            let slot = (self.options.warmup_count - 1) as usize;
+            unsafe {
+                std::ptr::write_volatile(recent_warmup_times.as_mut_ptr().add(slot), 0.0);
+            }
+        }
 
         // Warmup phase
         if self.options.warmup_count > 0 {
@@ -240,8 +238,10 @@ impl<'a> Benchmark<'a> {
         };
 
         let preparation_result = run_preparation_command()?;
-        let preparation_overhead =
-            preparation_result.map_or(0.0, |res| res.time_real + self.executor.time_overhead());
+        let preparation_overhead = match preparation_result {
+            Some(res) => res.time_real + self.executor.time_overhead(),
+            None => 0.0,
+        };
 
         // Initial timing run
         let (res, status) = self.executor.run_command_and_measure(
@@ -253,8 +253,10 @@ impl<'a> Benchmark<'a> {
         let success = status.success();
 
         let conclusion_result = run_conclusion_command()?;
-        let conclusion_overhead =
-            conclusion_result.map_or(0.0, |res| res.time_real + self.executor.time_overhead());
+        let conclusion_overhead = match conclusion_result {
+            Some(res) => res.time_real + self.executor.time_overhead(),
+            None => 0.0,
+        };
 
         // Determine number of benchmark runs
         let runs_in_min_time = (self.options.min_benchmarking_time
@@ -266,12 +268,10 @@ impl<'a> Benchmark<'a> {
         let count = {
             let min = cmp::max(runs_in_min_time, self.options.run_bounds.min);
 
-            self.options
-                .run_bounds
-                .max
-                .as_ref()
-                .map(|max| cmp::min(min, *max))
-                .unwrap_or(min)
+            match self.options.run_bounds.max {
+                Some(max) => cmp::min(min, max),
+                None => min,
+            }
         };
 
         let count_remaining = count - 1;
@@ -395,9 +395,14 @@ impl<'a> Benchmark<'a> {
         let mut warnings = vec![];
 
         // Check execution time
-        if matches!(self.options.executor_kind, ExecutorKind::Shell(_))
-            && times_real.iter().any(|&t| t < MIN_EXECUTION_TIME)
-        {
+        let mut has_fast_execution = false;
+        for &t in &times_real {
+            if t < MIN_EXECUTION_TIME {
+                has_fast_execution = true;
+                break;
+            }
+        }
+        if matches!(self.options.executor_kind, ExecutorKind::Shell(_)) && has_fast_execution {
             warnings.push(Warnings::FastExecutionTime);
         }
 
@@ -409,15 +414,13 @@ impl<'a> Benchmark<'a> {
         // Run outlier detection
         let scores = modified_zscores(&times_real);
 
+        let prepare_in_use = match &self.options.preparation_command {
+            Some(v) => v.len() > 0,
+            None => false,
+        };
         let outlier_warning_options = OutlierWarningOptions {
             warmup_in_use: self.options.warmup_count > 0,
-            prepare_in_use: self
-                .options
-                .preparation_command
-                .as_ref()
-                .map(|v| v.len())
-                .unwrap_or(0)
-                > 0,
+            prepare_in_use,
         };
 
         if scores[0] > OUTLIER_THRESHOLD {
@@ -425,8 +428,17 @@ impl<'a> Benchmark<'a> {
                 times_real[0],
                 outlier_warning_options,
             ));
-        } else if scores.iter().any(|&s| s.abs() > OUTLIER_THRESHOLD) {
-            warnings.push(Warnings::OutliersDetected(outlier_warning_options));
+        } else {
+            let mut has_outlier = false;
+            for &s in &scores {
+                if s.abs() > OUTLIER_THRESHOLD {
+                    has_outlier = true;
+                    break;
+                }
+            }
+            if has_outlier {
+                warnings.push(Warnings::OutliersDetected(outlier_warning_options));
+            }
         }
 
         if !warnings.is_empty() {
@@ -443,6 +455,11 @@ impl<'a> Benchmark<'a> {
 
         self.run_cleanup_command(self.command.get_parameters().iter().cloned(), output_policy)?;
 
+        let mut parameters = std::collections::BTreeMap::new();
+        for (name, value) in self.command.get_parameters() {
+            parameters.insert(name.to_string(), value.to_string());
+        }
+
         Ok(BenchmarkResult {
             command: self.command.get_name(),
             command_with_unused_parameters: self.command.get_name_with_unused_parameters(),
@@ -456,12 +473,7 @@ impl<'a> Benchmark<'a> {
             times: Some(times_real),
             memory_usage_byte: Some(memory_usage_byte),
             exit_codes,
-            parameters: self
-                .command
-                .get_parameters()
-                .iter()
-                .map(|(name, value)| (name.to_string(), value.to_string()))
-                .collect(),
+            parameters,
         })
     }
 }

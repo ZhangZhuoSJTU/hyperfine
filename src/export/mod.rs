@@ -145,7 +145,9 @@ impl ExportManager {
                 ExportTarget::Stdout => {
                     if !intermediate {
                         println!();
-                        println!("{}", String::from_utf8(content()?).unwrap());
+                        // SAFETY: `content()` is produced by our own serializers, which
+                        // only ever emit valid UTF-8.
+                        println!("{}", unsafe { String::from_utf8_unchecked(content()?) });
                     }
                 }
             }

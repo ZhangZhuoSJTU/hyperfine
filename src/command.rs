@@ -44,26 +44,26 @@ impl<'a> Command<'a> {
         expression: &'a str,
         parameters: impl IntoIterator<Item = ParameterNameAndValue<'a>>,
     ) -> Command<'a> {
+        let parameters: Vec<ParameterNameAndValue<'a>> = parameters.into_iter().collect();
         Command {
             name,
             expression,
-            parameters: parameters.into_iter().collect(),
+            parameters,
         }
     }
 
     pub fn get_name(&self) -> String {
-        self.name.map_or_else(
-            || self.get_command_line(),
-            |name| self.replace_parameters_in(name),
-        )
+        match self.name {
+            Some(name) => self.replace_parameters_in(name),
+            None => self.get_command_line(),
+        }
     }
 
     pub fn get_name_with_unused_parameters(&self) -> String {
-        let parameters = self
-            .get_unused_parameters()
-            .fold(String::new(), |output, (parameter, value)| {
-                output + &format!("{parameter} = {value}, ")
-            });
+        let mut parameters = String::new();
+        for (parameter, value) in self.get_unused_parameters() {
+            parameters.push_str(&format!("{parameter} = {value}, "));
+        }
         let parameters = parameters.trim_end_matches(", ");
         let parameters = if parameters.is_empty() {
             "".into()
@@ -80,9 +80,9 @@ impl<'a> Command<'a> {
 
     pub fn get_command(&self) -> Result<std::process::Command> {
         let command_line = self.get_command_line();
-        let mut tokens = shell_words::split(&command_line)
-            .with_context(|| format!("Failed to parse command '{command_line}'"))?
-            .into_iter();
+        let split_tokens = shell_words::split(&command_line)
+            .with_context(|| format!("Failed to parse command '{command_line}'"))?;
+        let mut tokens = split_tokens.into_iter();
 
         if let Some(program_name) = tokens.next() {
             let mut command_builder = std::process::Command::new(program_name);
@@ -133,6 +133,13 @@ impl<'a> Command<'a> {
 /// A collection of commands that should be benchmarked
 pub struct Commands<'a>(Vec<Command<'a>>);
 
+fn collect_str_values<'b>(values: Option<ValuesRef<'b, String>>) -> Vec<&'b str> {
+    match values {
+        Some(values) => values.map(|v| v.as_str()).collect::<Vec<_>>(),
+        None => vec![],
+    }
+}
+
 impl<'a> Commands<'a> {
     pub fn from_cli_arguments(matches: &'a ArgMatches) -> Result<Commands<'a>> {
         let command_names = matches.get_many::<String>("command-name");
@@ -153,34 +160,30 @@ impl<'a> Commands<'a> {
                 step_size,
             )?))
         } else if let Some(args) = matches.get_many::<String>("parameter-list") {
-            let command_names = command_names.map_or(vec![], |names| {
-                names.map(|v| v.as_str()).collect::<Vec<_>>()
-            });
+            let command_names = collect_str_values(command_names);
             let args: Vec<_> = args.map(|v| v.as_str()).collect::<Vec<_>>();
-            let param_names_and_values: Vec<(&str, Vec<String>)> = args
-                .chunks_exact(2)
-                .map(|pair| {
-                    let name = pair[0];
-                    let list_str = pair[1];
-                    (name, tokenize(list_str))
-                })
-                .collect();
+            let mut param_names_and_values: Vec<(&str, Vec<String>)> = Vec::new();
+            for pair in args.chunks_exact(2) {
+                let name = pair[0];
+                let list_str = pair[1];
+                param_names_and_values.push((name, tokenize(list_str)));
+            }
             {
-                let duplicates =
-                    Self::find_duplicates(param_names_and_values.iter().map(|(name, _)| *name));
+                let names_iter = param_names_and_values.iter().map(|(name, _)| *name);
+                let duplicates = Self::find_duplicates(names_iter);
                 if !duplicates.is_empty() {
                     bail!("Duplicate parameter names: {}", &duplicates.join(", "));
                 }
             }
 
-            let dimensions: Vec<usize> = std::iter::once(command_strings.len())
-                .chain(
-                    param_names_and_values
-                        .iter()
-                        .map(|(_, values)| values.len()),
-                )
-                .collect();
-            let param_space_size = dimensions.iter().product();
+            let mut dimensions: Vec<usize> = vec![command_strings.len()];
+            for (_, values) in &param_names_and_values {
+                dimensions.push(values.len());
+            }
+            let mut param_space_size: usize = 1;
+            for d in &dimensions {
+                param_space_size *= d;
+            }
             if param_space_size == 0 {
                 return Ok(Self(Vec::new()));
             }
@@ -200,10 +203,8 @@ impl<'a> Commands<'a> {
             let mut commands = Vec::with_capacity(param_space_size);
             let mut index = vec![0usize; dimensions.len()];
             'outer: loop {
-                let name = command_names
-                    .get(i)
-                    .or_else(|| command_names.first())
-                    .copied();
+                let name_ref = command_names.get(i).or_else(|| command_names.first());
+                let name = name_ref.copied();
                 i += 1;
 
                 let (command_index, params_indices) = index.split_first().unwrap();
@@ -232,9 +233,7 @@ impl<'a> Commands<'a> {
 
             Ok(Self(commands))
         } else {
-            let command_names = command_names.map_or(vec![], |names| {
-                names.map(|v| v.as_str()).collect::<Vec<_>>()
-            });
+            let command_names = collect_str_values(command_names);
             if command_names.len() > command_strings.len() {
                 return Err(OptionsError::TooManyCommandNames(command_strings.len()).into());
             }
@@ -252,7 +251,8 @@ impl<'a> Commands<'a> {
     }
 
     pub fn num_commands(&self, has_reference_command: bool) -> usize {
-        self.0.len() + if has_reference_command { 1 } else { 0 }
+        let reference_count = if has_reference_command { 1 } else { 0 };
+        self.0.len() + reference_count
     }
 
     /// Finds all the strings that appear multiple times in the input iterator, returning them in
@@ -262,10 +262,13 @@ impl<'a> Commands<'a> {
         for s in i {
             *counts.entry(s).or_default() += 1;
         }
-        counts
-            .into_iter()
-            .filter_map(|(k, n)| if n > 1 { Some(k) } else { None })
-            .collect()
+        let mut duplicates = Vec::new();
+        for (k, n) in counts {
+            if n > 1 {
+                duplicates.push(k);
+            }
+        }
+        duplicates
     }
 
     fn build_parameter_scan_commands<'b, T: Numeric>(
@@ -283,10 +286,8 @@ impl<'a> Commands<'a> {
         let mut commands = vec![];
         for value in param_range {
             for cmd in &command_strings {
-                let name = command_names
-                    .get(i)
-                    .or_else(|| command_names.first())
-                    .copied();
+                let name_ref = command_names.get(i).or_else(|| command_names.first());
+                let name = name_ref.copied();
                 commands.push(Command::new_parametrized(
                     name,
                     cmd,
@@ -315,9 +316,7 @@ impl<'a> Commands<'a> {
         mut vals: ValuesRef<'b, String>,
         step: Option<&str>,
     ) -> Result<Vec<Command<'b>>, ParameterScanError> {
-        let command_names = command_names.map_or(vec![], |names| {
-            names.map(|v| v.as_str()).collect::<Vec<_>>()
-        });
+        let command_names = collect_str_values(command_names);
         let param_name = vals.next().unwrap().as_str();
         let param_min = vals.next().unwrap().as_str();
         let param_max = vals.next().unwrap().as_str();

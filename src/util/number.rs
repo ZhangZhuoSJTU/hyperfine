@@ -39,10 +39,13 @@ impl TryFrom<Number> for usize {
     fn try_from(numeric: Number) -> Result<Self, Self::Error> {
         match numeric {
             Number::Int(i) => usize::try_from(i).map_err(|_| ()),
-            Number::Decimal(d) => match d.to_u64() {
-                Some(u) => usize::try_from(u).map_err(|_| ()),
-                None => Err(()),
-            },
+            Number::Decimal(d) => {
+                let as_u64 = d.to_u64();
+                match as_u64 {
+                    Some(u) => usize::try_from(u).map_err(|_| ()),
+                    None => Err(()),
+                }
+            }
         }
     }
 }

@@ -16,9 +16,11 @@ pub fn format_duration_unit(duration: Second, unit: Option<Unit>) -> (String, Un
 
 /// Like `format_duration`, but returns the target unit as well.
 pub fn format_duration_value(duration: Second, unit: Option<Unit>) -> (String, Unit) {
-    if (duration < 0.001 && unit.is_none()) || unit == Some(Unit::MicroSecond) {
+    let wants_microsecond = (duration < 0.001 && unit.is_none()) || unit == Some(Unit::MicroSecond);
+    let wants_millisecond = (duration < 1.0 && unit.is_none()) || unit == Some(Unit::MilliSecond);
+    if wants_microsecond {
         (Unit::MicroSecond.format(duration), Unit::MicroSecond)
-    } else if (duration < 1.0 && unit.is_none()) || unit == Some(Unit::MilliSecond) {
+    } else if wants_millisecond {
         (Unit::MilliSecond.format(duration), Unit::MilliSecond)
     } else {
         (Unit::Second.format(duration), Unit::Second)

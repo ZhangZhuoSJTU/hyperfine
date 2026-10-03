@@ -25,7 +25,10 @@ pub fn modified_zscores(xs: &[f64]) -> Vec<f64> {
     let x_median = median(xs);
 
     // Compute the absolute deviations from the median:
-    let deviations: Vec<f64> = xs.iter().map(|x| (x - x_median).abs()).collect();
+    let mut deviations: Vec<f64> = Vec::with_capacity(xs.len());
+    for &x in xs {
+        deviations.push((x - x_median).abs());
+    }
 
     // Compute median absolute deviation:
     let mad = median(&deviations);
@@ -34,7 +37,11 @@ pub fn modified_zscores(xs: &[f64]) -> Vec<f64> {
     let mad = if mad > 0.0 { mad } else { f64::EPSILON };
 
     // Compute modified Z-scores (x_i - x_median) / MAD
-    xs.iter().map(|&x| (x - x_median) / mad).collect()
+    let mut scores: Vec<f64> = Vec::with_capacity(xs.len());
+    for &x in xs {
+        scores.push((x - x_median) / mad);
+    }
+    scores
 }
 
 /// Return the number of outliers in a given sample. Outliers are defined as data points with a

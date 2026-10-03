@@ -1,17 +1,31 @@
 /// A max function for f64's without NaNs
 pub fn max(vals: &[f64]) -> f64 {
-    *vals
-        .iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap()
+    if vals.len() == 1 {
+        // SAFETY: length checked above.
+        return unsafe { *vals.get_unchecked(0) };
+    }
+    let mut result = vals[0];
+    for &v in &vals[1..] {
+        if v.partial_cmp(&result).unwrap() == std::cmp::Ordering::Greater {
+            result = v;
+        }
+    }
+    result
 }
 
 /// A min function for f64's without NaNs
 pub fn min(vals: &[f64]) -> f64 {
-    *vals
-        .iter()
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap()
+    if vals.len() == 1 {
+        // SAFETY: length checked above.
+        return unsafe { *vals.get_unchecked(0) };
+    }
+    let mut result = vals[0];
+    for &v in &vals[1..] {
+        if v.partial_cmp(&result).unwrap() == std::cmp::Ordering::Less {
+            result = v;
+        }
+    }
+    result
 }
 
 #[test]
