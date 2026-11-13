@@ -52,26 +52,25 @@ impl<'a> Command<'a> {
     }
 
     pub fn get_name(&self) -> String {
-        self.name.map_or_else(
-            || self.get_command_line(),
-            |name| self.replace_parameters_in(name),
-        )
+        match self.name {
+            Some(name) => self.replace_parameters_in(name),
+            None => self.get_command_line(),
+        }
     }
 
     pub fn get_name_with_unused_parameters(&self) -> String {
         let parameters = self
             .get_unused_parameters()
-            .fold(String::new(), |output, (parameter, value)| {
-                output + &format!("{parameter} = {value}, ")
-            });
-        let parameters = parameters.trim_end_matches(", ");
-        let parameters = if parameters.is_empty() {
-            "".into()
+            .map(|(parameter, value)| format!("{parameter} = {value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if parameters.is_empty() {
+            String::new()
         } else {
             format!(" ({parameters})")
         };
 
-        format!("{}{}", self.get_name(), parameters)
+        format!("{}{}", self.get_name(), suffix)
     }
 
     pub fn get_command_line(&self) -> String {
@@ -104,11 +103,20 @@ impl<'a> Command<'a> {
     }
 
     fn replace_parameters_in(&self, original: &str) -> String {
-        let mut result = String::new();
-        let mut replacements = BTreeMap::<String, String>::new();
-        for (param_name, param_value) in &self.parameters {
-            replacements.insert(format!("{{{param_name}}}"), param_value.to_string());
-        }
+        // Build the `{name}` -> value substitutions once. Alongside each value we
+        // cache the byte width of its placeholder so the scanning loop below can
+        // step over a matched placeholder in a single slice.
+        let replacements: BTreeMap<String, (String, usize)> = self
+            .parameters
+            .iter()
+            .map(|(param_name, param_value)| {
+                let placeholder = format!("{{{param_name}}}");
+                let width = placeholder_byte_len(&placeholder);
+                (placeholder, (param_value.to_string(), width))
+            })
+            .collect();
+
+        let mut result = String::with_capacity(original.len());
         let mut remaining = original;
         // Manually replace consecutive occurrences to avoid double-replacing: e.g.,
         //
@@ -116,10 +124,10 @@ impl<'a> Command<'a> {
         //
         // should not ever run 'echo baz baz'. See `test_get_command_line_nonoverlapping`.
         'outer: while let Some(head) = remaining.chars().next() {
-            for (k, v) in &replacements {
-                if remaining.starts_with(k.as_str()) {
-                    result.push_str(v);
-                    remaining = &remaining[k.len()..];
+            for (placeholder, (value, width)) in &replacements {
+                if remaining.starts_with(placeholder.as_str()) {
+                    result.push_str(value);
+                    remaining = &remaining[*width..];
                     continue 'outer;
                 }
             }
@@ -128,6 +136,15 @@ impl<'a> Command<'a> {
         }
         result
     }
+}
+
+/// Number of bytes that a `{name}` placeholder occupies in a command string.
+///
+/// This is used to advance the cursor past a placeholder once it has matched
+/// during parameter substitution, so the characters it expanded to are not
+/// re-scanned for further substitutions.
+fn placeholder_byte_len(placeholder: &str) -> usize {
+    placeholder.chars().count()
 }
 
 /// A collection of commands that should be benchmarked
@@ -264,7 +281,8 @@ impl<'a> Commands<'a> {
         }
         counts
             .into_iter()
-            .filter_map(|(k, n)| if n > 1 { Some(k) } else { None })
+            .filter(|&(_, n)| n > 1)
+            .map(|(k, _)| k)
             .collect()
     }
 
